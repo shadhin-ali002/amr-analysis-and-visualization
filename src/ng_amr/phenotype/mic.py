@@ -1,13 +1,18 @@
-"""Phenotype orchestration."""
+"""MIC workbook: isolate MICs, method details, QC, paired and categorical agreement."""
 from __future__ import annotations
 
-from .engine import (
+import math
+import re
+
+import numpy as np
+import openpyxl
+
+from ng_amr.core.constants import (
     AD_CAT,
     AD_MCF,
     AD_MIC,
     ANTIBIOTIC_ORDER,
     CATEGORIES,
-    Counter,
     DATE_FIELDS,
     EST_CAT,
     EST_MCF,
@@ -15,18 +20,62 @@ from .engine import (
     QC,
     ROUNDED,
     WGS_CAT,
-    agreement_tables,
-    build_mic_illustration_pptx,
-    category,
-    defaultdict,
-    math,
-    measurement,
-    method_profiles,
-    np,
-    openpyxl,
-    plt,
-    style_workbook,
 )
+from ng_amr.io.workbook import (
+    measurement,
+)
+
+
+def style_workbook(wb):
+    from openpyxl.styles import Alignment, Font, PatternFill
+    for sheet in wb:
+        sheet.freeze_panes="B2"
+        sheet.auto_filter.ref=sheet.dimensions
+        sheet.row_dimensions[1].height=38
+        for cell in sheet[1]:
+            cell.font=Font(color="FFFFFF",bold=True)
+            cell.fill=PatternFill("solid",fgColor="234D62")
+            cell.alignment=Alignment(wrap_text=True,vertical="center")
+            sheet.column_dimensions[cell.column_letter].width=min(52,max(17,len(str(cell.value))*.75))
+
+
+def category(value):
+    return {"s":"S","sensitive":"S","susceptible":"S","i":"I","intermediate":"I","r":"R","resistant":"R"}.get(str(value).strip().lower())
+
+
+def agreement_tables(wb,book):
+    """Recorded categories with explicit method pairs and denominators."""
+    from itertools import combinations
+
+    from scipy.stats import binomtest
+    ws=wb.create_sheet("Method pairs")
+    ws.append(["Antibiotic","Method 1","Method 2","Paired S/I/R","Same S/I/R","Agreement (%)",
+               "Paired R or NS binary","Only method 1 R or NS","Only method 2 R or NS","Exact McNemar p"])
+    ref=wb.create_sheet("AD comparator errors")
+    ref.append(["Antibiotic","S/I/R pairs","Major errors (EST R, AD S)","AD S denominator","Major errors (%)",
+                "Very major errors (EST S, AD R)","AD R denominator","Very major errors (%)","Minor errors (I versus S or R)","Minor errors (%)"])
+    for drug in ANTIBIOTIC_ORDER:
+        records=[r for (k,d),r in book.values.items() if d==drug and k!=QC]
+        for left,right in combinations(CATEGORIES,2):
+            binary=[];pairs=[]
+            for row in records:
+                a,b=row.get(left),row.get(right)
+                x,y=category(a),category(b)
+                if x and y:pairs.append((x,y))
+                def resistant(value):
+                    k=re.sub(r"[^a-z]","",str(value).lower())
+                    return True if k in {"ns","nonsusceptible"} else None if not category(value) else category(value)=="R"
+                x,y=resistant(a),resistant(b)
+                if x is not None and y is not None:binary.append((x,y))
+            n=len(pairs);matches=sum(x==y for x,y in pairs)
+            a=sum(x and not y for x,y in binary);b=sum(y and not x for x,y in binary)
+            ws.append([drug,left,right,n,matches,100*matches/n if n else None,len(binary),a,b,
+                       binomtest(a,a+b,.5).pvalue if a+b else 1 if binary else None])
+            if left==EST_CAT and right==AD_CAT:
+                major=sum(x=="R" and y=="S" for x,y in pairs);vmajor=sum(x=="S" and y=="R" for x,y in pairs)
+                sd=sum(y=="S" for _,y in pairs);rd=sum(y=="R" for _,y in pairs)
+                minor=sum((x=="I")!=(y=="I") for x,y in pairs)
+                ref.append([drug,n,major,sd,100*major/sd if sd else None,vmajor,rd,100*vmajor/rd if rd else None,minor,100*minor/n if n else None])
 
 
 def phenotype_outputs(data, assemblies, root, audit):
@@ -56,37 +105,20 @@ def phenotype_outputs(data, assemblies, root, audit):
     trace=wb.create_sheet("Source cells")
     trace.append(["Canonical ID","Workbook ID","Antibiotic","Field","Source sheet","Cell","Source value","Source unit","Status"])
     for row in data.trace:trace.append(row)
-    figdir=root/"MIC_Figures"
-    figdir.mkdir(exist_ok=True)
     stats=wb.create_sheet("Paired agreement")
     stats.append(["Antibiotic","Exact quantitative pairs","Within one doubling dilution","Essential agreement (%)","Category pairs","Identical categories","Categorical agreement (%)","Log2 bias EST minus AD","Wilcoxon paired p"])
     concord=wb.create_sheet("Recorded WGS agreement")
     concord.append(["Antibiotic","Phenotype method","Paired clinical categories","Concordant","Agreement (%)"])
     for method in (ROUNDED, AD_MIC):
-        counts=defaultdict(Counter)
         cat=EST_CAT if method==ROUNDED else AD_CAT
-        for (key,d),row in data.values.items():
-            if key==QC or row.get(method) is None: continue
-            counts[d][str(row[method])]+=1
-        if not counts:
+        if not any(key!=QC and row.get(method) is not None for (key,d),row in data.values.items()):
             audit.add(method,"skipped","no clinical MICs in the source field")
             continue
-        fig,axes=plt.subplots(4,2,figsize=(13,13),layout="constrained")
-        for d,ax in zip(ANTIBIOTIC_ORDER,axes.flat):
-            counts_d=counts[d]
-            labels=sorted(counts_d,key=lambda v:(measurement(v)[1],v))
-            ax.bar(range(len(labels)),[counts_d[k] for k in labels],color="#237c79")
-            ax.set_xticks(range(len(labels)),labels,rotation=40,ha="right")
-            ax.set_title(f"{d} (n={sum(counts_d.values())})")
-            ax.set_ylabel("Clinical isolates")
+        for d in ANTIBIOTIC_ORDER:
             pairs=[(category(row.get(cat)),category(row.get(WGS_CAT))) for (k,drug),row in data.values.items()
                    if k!=QC and drug==d and category(row.get(cat)) and category(row.get(WGS_CAT))]
             agree=sum(a==b for a,b in pairs)
             concord.append([d,method,len(pairs),agree,100*agree/len(pairs) if pairs else None])
-        fig.suptitle(method+" (µg/mL) • reported bounds retained")
-        fig.savefig(figdir/("EST_rounded_MIC.png" if method==ROUNDED else "AD_MIC.png"),dpi=160)
-        plt.close(fig)
-    plotted=[]
     for drug in ANTIBIOTIC_ORDER:
         vals=[row for (key,d),row in data.values.items() if key!=QC and d==drug]
         pairs=[]
@@ -101,31 +133,6 @@ def phenotype_outputs(data, assemblies, root, audit):
         from scipy.stats import wilcoxon
         pval=float(wilcoxon(dif).pvalue) if n>=2 and np.any(dif!=0) else None
         stats.append([drug,n,hit,100*hit/n if n else None,len(cats),same,100*same/len(cats) if cats else None,float(np.mean(dif)) if n else None,pval])
-        if n:plotted.append((drug,pairs))
-    if plotted:
-        fig,axes=plt.subplots(len(plotted),1,figsize=(6,3.5*len(plotted)),squeeze=False,layout="constrained")
-        for ax,(d,pairs) in zip(axes.flat,plotted):
-            x,y=np.log2(np.array(pairs)).T
-            ax.scatter((x+y)/2,x-y,alpha=.65)
-            ax.axhline(np.mean(x-y),color="#076b66")
-            if len(x)>1:
-                for sign in [-1,1]:ax.axhline(np.mean(x-y)+sign*1.96*np.std(x-y,ddof=1),linestyle="--",color="gray")
-            ax.set(title=f"{d} • {len(x)} exact pairs",xlabel="Mean log₂ MIC",ylabel="log₂ rounded E-strip − log₂ AD")
-        fig.savefig(figdir/"Paired_EST_AD.png",dpi=150)
-        plt.close(fig)
-    else:audit.add("paired MIC figure","skipped","no exact clinical E-strip / AD pairs")
     agreement_tables(wb,data)
-    for method in (ROUNDED,AD_MIC):method_profiles(data,figdir,method,audit)
     style_workbook(wb)
     wb.save(root/"NG_AMR_MIC.xlsx")
-
-def report_gallery(root):
-    for method, sub in (("EST", "EST_rounded"), ("AD", "AD")):
-        figures = sorted((root / "MIC_Figures" / sub).glob("*.png"))
-        profiles = "EST_rounded_genotype_phenotype" if method == "EST" else "AD_genotype_phenotype"
-        figures.extend(sorted((root / profiles).glob("*.png")))
-        if figures:
-            target = root / "MIC_Figures" / sub
-            target.mkdir(exist_ok=True)
-            if not build_mic_illustration_pptx(str(target), [str(p) for p in figures], str(root)):
-                raise RuntimeError(f"Could not create {method} presentation")

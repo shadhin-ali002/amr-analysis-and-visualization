@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ng-amr"
+dynamic = ["version"]
+description = "MIC summaries and resistance-gene mutation reports for Neisseria gonorrhoeae isolates"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Md. Shadhin Ali" }]
+requires-python = ">=3.11"
+keywords = ["antimicrobial resistance", "Neisseria gonorrhoeae", "MIC", "bioinformatics", "BLAST"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "openpyxl",
+    "reportlab",
+]
+
+[project.optional-dependencies]
+genomics = ["biopython", "parasail"]
+
+[project.scripts]
+ng-amr = "ng_amr.cli:main"
+
+[project.urls]
+Repository = "https://github.com/shadhin-ali002/amr-analysis-and-visualization"
+
+[tool.setuptools.dynamic]
+version = { attr = "ng_amr.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["F", "E9", "I"]

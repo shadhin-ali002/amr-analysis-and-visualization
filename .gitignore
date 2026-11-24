@@ -8,3 +8,7 @@ outputs/
 .pytest_cache/
 .DS_Store
 Thumbs.db
+*.egg-info/
+build/
+dist/
+.ruff_cache/

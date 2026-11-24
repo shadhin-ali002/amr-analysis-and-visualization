@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "AMR analysis and visualization (ng-amr)"
+type: software
+authors:
+  - family-names: "Ali"
+    given-names: "Md. Shadhin"
+version: 1.0.0
+date-released: 2026-11-25
+license: MIT
+repository-code: "https://github.com/shadhin-ali002/amr-analysis-and-visualization"
+keywords:
+  - antimicrobial resistance
+  - Neisseria gonorrhoeae
+  - MIC
+  - bioinformatics

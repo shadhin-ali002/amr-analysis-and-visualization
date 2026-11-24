@@ -1,23 +1,123 @@
 # AMR analysis and visualization
 
-Summarize observed MICs and paired methods, and produce grouped mutation reports by gene and isolate when existing assemblies and reference files are available. Plain workbook mode reads the five sheets shown in the example: EST_MIC, AD_MIC, McFarland, Disc_Diffusion and WGS. Units and isolate headers matter. Supply a workbook with saved numerical values for formula-derived cells.
+[![Tests](https://github.com/shadhin-ali002/amr-analysis-and-visualization/actions/workflows/tests.yml/badge.svg)](https://github.com/shadhin-ali002/amr-analysis-and-visualization/actions/workflows/tests.yml)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-The example contains three fictional samples. Inspect the “Isolate MICs” sheet of `01_Mutation_Analysis/NG_AMR_MIC.xlsx`. The example AD column for penicillin G contains 0.25, 0.5 and 1 µg/mL. The input categories are fictional.
+`ng-amr` is a command-line tool for antimicrobial-resistance (AMR) analysis of *Neisseria gonorrhoeae*
+isolates. It does two things:
 
-For the optional genomic workflow install `requirements-genomics.txt` and place NCBI BLAST+ executables `blastn` and `makeblastdb` on PATH. Use `--wgs-base` with a prepared dataset organized as `Assembly/NT/Plane_Fasta/` for assembly FASTAs, `Assembly/NT/` for annotated inputs, and optionally `Assembly/AA/`. The reference directory contains `Refs/Genes_RefSeq.fasta` and `Refs/Curated_Variants.json`. Select an existing catalogue of another name with `--catalog`. Supply these data separately. Grouped PDF, HTML and Excel outputs reside under `Mutation_Reports/By_Gene/` and `Mutation_Reports/By_Isolate/` inside the mutation output folder. Use `--id-map` for an explicit filename,isolate_id CSV. Run `python run_amr.py --self-test` for the inherited regression checks.
+1. **MIC workbook analysis.** It reads a laboratory MIC workbook (E-strip, agar dilution, McFarland,
+   disc diffusion and recorded WGS categories) and writes one clean Excel workbook. That workbook has
+   per-isolate MICs, QC results, source-cell traceability, E-strip vs agar-dilution agreement (essential and
+   categorical agreement, log₂ bias, Wilcoxon test) and method-pair error rates.
+2. **Resistance-gene mutation detection** (optional). From existing genome assemblies it locates 30
+   resistance loci with BLAST+ (penA, mtrR, gyrA, parC, 23S rDNA and others), aligns them to reference
+   sequences, and calls substitutions, insertions, deletions, premature stops and promoter or rRNA SNPs. Calls
+   are flagged against a curated variant catalogue, then written as Excel matrices, CSV tables, and per-gene
+   and per-isolate **PDF and HTML alignment reports**.
 
-Generated figures, workbooks and grouped reports are under `01_Mutation_Analysis/`. The run log, manifest, stage status and summary presentation are under `05_Other_Outputs/`.
+The tool makes no image files or slide decks. Every result is a table (XLSX/CSV), a report (PDF/HTML) or
+plain text (FASTA/Markdown).
 
-## First run on Windows
+## Install
 
-Open PowerShell in this project folder. Use Python 3.11 or newer; choose the corresponding installed interpreter in the first command.
+Python 3.11 or newer. On Windows PowerShell:
 
 ```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe run_amr.py --workbook examples/demo_mic.xlsx
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[genomics]"
 ```
 
-Use `--output` for a custom output directory. The default is `outputs/` in the working directory. Run `python run_amr.py --help` for all flags. Run `python -m unittest discover -s tests -v` with the project’s environment to check the supplied example. On macOS or Linux create the environment with `python3 -m venv .venv` and use `.venv/bin/python`.
+Use `pip install -e .` if you only need the MIC workbook analysis. The genomic route also needs
+[NCBI BLAST+](https://blast.ncbi.nlm.nih.gov/doc/blast-help/downloadblastdata.html) (`blastn`,
+`makeblastdb`) on `PATH`. On macOS or Linux use `python3 -m venv .venv` and `.venv/bin/python`.
 
-[Input formats](docs/data-formats.md) · [Verification](docs/verification.md) · [Upload to GitHub](docs/github-upload.md)
+Without installing, you can also run `pip install -r requirements-genomics.txt` and call `python run_amr.py`
+instead of `ng-amr`.
+
+## Quick start
+
+```powershell
+ng-amr --workbook examples/demo_mic.xlsx
+ng-amr --workbook examples/demo_mic.xlsx --wgs-base tests/fixtures/genomic_demo
+ng-amr --self-test
+```
+
+The first command analyses the fictional example workbook. The second also runs mutation detection on a
+small synthetic genome set, which takes about 15 seconds. `ng-amr --help` lists every option.
+
+| Option | Purpose |
+|---|---|
+| `--workbook` | MIC master workbook (`.xlsx`) |
+| `--wgs-base` | Folder holding `Assembly/NT/Plane_Fasta/*.fasta` and `Refs/` |
+| `--catalog` | Curated variant JSON (default `Refs/Curated_Variants.json`) |
+| `--genes` | Comma-separated subset of loci, e.g. `penA,gyrA` |
+| `--id-map` | `filename,isolate_id` CSV when FASTA names differ from isolate IDs |
+| `--aliases` | `alias,canonical_id` CSV to reconcile historical IDs |
+| `--thresholds` | Prevalence percentages for summary tables (default `25,30,35,40,50`) |
+| `--no-html` | Skip HTML alignment reports |
+| `--output` | Parent folder for timestamped runs (default `outputs/`) |
+
+## Outputs
+
+Each run writes a new `outputs/Run_<timestamp>/` folder:
+
+```
+Run_<timestamp>/
+├── 01_Mutation_Analysis/
+│   ├── NG_AMR_MIC.xlsx                     MIC tables, QC, agreement statistics
+│   ├── NG_AMR_Mutation_MIC_Matrix.xlsx     mutation × isolate matrix with MICs   (genomic)
+│   ├── NG_AMR_MIC_MasterMatrix.xlsx        combined master workbook              (genomic)
+│   ├── WGS_calls.csv                       locus status per isolate              (genomic)
+│   ├── Mutation_Tables/                    per-gene call and matrix CSVs         (genomic)
+│   ├── Mutation_Reports/By_Gene|By_Isolate PDF, HTML and Excel alignment reports  (genomic)
+│   ├── Extracted_Sequences/                called gene and protein FASTA         (genomic)
+│   └── Summary_Tables/                     catalogue, burden, thresholds, drug classes, key findings
+└── 05_Other_Outputs/
+    ├── run_status.csv                      outcome of every stage
+    ├── NG_AMR_Run_Manifest.json            arguments, versions, input and source checksums
+    └── analysis.log
+```
+
+See [docs/outputs.md](docs/outputs.md) for every file and [docs/data-formats.md](docs/data-formats.md) for the inputs.
+
+## Project layout
+
+```
+src/ng_amr/
+├── cli.py               command line and run sequence
+├── core/                identifiers, aliases, audit trail, gene and antibiotic configuration
+├── io/                  MIC workbook reader, assembly discovery
+├── phenotype/           MIC workbook and agreement statistics
+├── genomics/            BLAST+ search, alignment, variant calling, sequence export
+├── reports/             PDF / HTML / Excel mutation reports, master matrices, summary tables
+└── selftest.py          built-in regression checks
+tests/                   unit, CLI and end-to-end tests (incl. synthetic BLAST+ fixture)
+examples/                fictional demo workbook and alias file
+```
+
+## Testing
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+The suite runs the example end to end and checks the CLI's argument validation, identifier and workbook
+parsing, and the 23 built-in checks. It also runs mutation detection on the synthetic genome set, which
+contains planted changes (penA A10V, gyrA S91F, a premature stop, a missing locus, promoter and 23S SNPs).
+The BLAST+ test is skipped when BLAST+ or the genomics extras are not installed.
+[docs/verification.md](docs/verification.md) says what is and is not validated.
+
+## Data privacy
+
+All example and test data are fictional or randomly generated. Keep real isolate data in `data/` or
+`private/`. Both folders, and `outputs/`, are git-ignored.
+
+## Citation
+
+If you use this software, please cite it using [CITATION.cff](CITATION.cff).
+
+## License
+
+[MIT](LICENSE) © 2026 Md. Shadhin Ali

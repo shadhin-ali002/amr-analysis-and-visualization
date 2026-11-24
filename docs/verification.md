@@ -1,10 +1,25 @@
 # Verification
 
-The source release passed the following Linux/Python 3.12 checks with fictional fixtures.
+Run the checks with:
 
-| Workflow | Check | Result |
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe run_amr.py --self-test
+```
+
+| Check | What it covers | Data |
 |---|---|---|
-| AMR | Read the five-sheet workbook, verify three named isolates and their AD MIC values, and generate the comparison and summary presentations. | Passed |
-| AMR regression checks | Run the inherited self-test with Biopython available. | All 33 checks passed |
+| `test_cli_example` | Reads the five-sheet example workbook, checks agar-dilution MICs of three isolates, workbook sheets, that no stage failed and that no image or slide files are made | Fictional workbook |
+| `test_cli_args` | Rejects missing inputs, missing files and invalid thresholds | — |
+| `test_units` | QC-strain name variants, alias file rules, MIC value parsing, workbook reading | Fictional |
+| `test_selftest` | The 23 built-in checks: protein and nucleotide mutation calling, disruption rules, gene types, prevalence threshold arithmetic, logger formats | Synthetic sequences |
+| `test_genomic_demo` | Full BLAST+ route: unchanged isolates have no calls; penA A10V and gyrA S91F are called and flagged as curated; a premature stop is reported as disruption; a missing locus is reported as absent | Random synthetic genomes with planted changes (`tests/fixtures/make_genomic_demo.py`) |
 
-To run the example test in this repository, install its requirements, then run `python -m unittest discover -s tests -v`. These checks cover software behavior. The source release did not validate clinical performance, full assembly calling with BLAST+, or Docker-based tree inference.
+When this repository was restructured (v1.0.0), the tables, CSVs, PDFs and HTML reports of a full example
+run were compared file by file against the original code's output, ignoring timestamps.
+
+## Not validated
+
+These checks cover software behaviour on fictional and synthetic inputs. They do **not** establish clinical
+or diagnostic performance, accuracy on real *N. gonorrhoeae* assemblies, or the correctness of any curated
+variant catalogue you supply. Review results before using them.

@@ -1,96 +1,34 @@
-"""Inputs routines."""
+"""Reading the MIC master workbook."""
 from __future__ import annotations
 
-
-
-import csv
-
-import logging
-
 import math
-
 import re
-
-from collections import Counter, defaultdict
-
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 import openpyxl
 
-logger = logging.getLogger("ng_analysis")
+from ng_amr.core.constants import (
+    AD_CAT,
+    AD_MCF,
+    AD_MIC,
+    ANTIBIOTIC_ORDER,
+    ANTIBIOTIC_SHORT,
+    DATE_FIELDS,
+    DD_CAT,
+    EST_CAT,
+    EST_MCF,
+    MEASURE,
+    MIC_FIELDS,
+    ORIGINAL,
+    QC,
+    ROUNDED,
+    WGS_CAT,
+)
+from ng_amr.core.ids import (
+    canonical,
+)
 
-QC = "ATCC49226"
-
-ALIASES = {}
-
-SEQUENCE_EXT = {".fa", ".fasta", ".fna"}
-
-def canonical(value):
-    name = str(value).strip().upper()
-    if re.fullmatch(r"(QC[ _-]*)?ATCC[ _-]*49226([ _-]*(QC|CONTROL))?", name):
-        return QC
-    return ALIASES.get(name, name)
-
-def assembly_id(stem):
-    return canonical(re.sub(r"^\d+_(?=.)", "", stem, count=1))
-
-def csv_write(path, header, rows):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8-sig") as out:
-        writer = csv.writer(out)
-        writer.writerow(header)
-        writer.writerows(rows)
-
-class Audit:
-    def __init__(self):
-        self.rows = []
-    def add(self, stage, status, detail):
-        self.rows.append((stage, status, str(detail)))
-        logger.log(logging.ERROR if status == "failed" else logging.INFO, "%s | %s | %s", stage, status, detail)
-
-def discover_assemblies(base, audit, mapping=None):
-    result = defaultdict(dict)
-    nt = base / "Assembly" / "NT"
-    for kind, directory in (("annotated", nt), ("plane", nt/"Plane_Fasta")):
-        groups = defaultdict(list)
-        if directory.is_dir():
-            for path in sorted(directory.iterdir()):
-                if path.is_file() and path.suffix.lower() in SEQUENCE_EXT:
-                    groups[(mapping or {}).get(path.name,assembly_id(path.stem))].append(path)
-        for key, paths in groups.items():
-            result[key][kind + "_files"] = paths
-            if len(paths) == 1:
-                result[key][kind] = str(paths[0])
-            else:
-                audit.add("assemblies", "collision", f"{kind} {key}: {paths}")
-    return result
-
-ANTIBIOTIC_ORDER = [
-    "Spectinomycin", "Penicillin G", "Ciprofloxacin", "Azithromycin",
-    "Tetracycline", "Ceftriaxone", "Cefixime", "Cefepime",
-]
-
-ANTIBIOTIC_SHORT = {
-    "Spectinomycin": "SPC",
-    "Penicillin G": "PG",
-    "Ciprofloxacin": "CIP",
-    "Azithromycin": "AZM",
-    "Tetracycline": "TET",
-    "Ceftriaxone": "CRO",
-    "Cefixime": "CFM",
-    "Cefepime": "FEP",
-}
-
-ORIGINAL, ROUNDED, AD_MIC = MIC_FIELDS = ("E-strip original MIC", "E-strip rounded MIC", "AD MIC")
-
-EST_CAT, AD_CAT, DD_CAT, WGS_CAT = CATEGORIES = (
-    "E-strip interpretation", "AD interpretation", "Disk diffusion category", "Recorded WGS prediction")
-
-EST_MCF, AD_MCF = "E-strip McFarland", "AD McFarland"
-
-DATE_FIELDS = ("E-strip applied", "E-strip read", "AD inoculated", "AD read", "E-strip McFarland date", "AD McFarland date")
-
-MEASURE = re.compile(r"^\s*([<>≤≥]=?|=)?\s*(\d+(?:\.\d*)?|\.\d+)(?:[eE]([+-]?\d+))?\s*$")
 
 def measurement(value):
     match = MEASURE.fullmatch(str(value))
@@ -101,12 +39,14 @@ def measurement(value):
             return operator or "", amount
     return "", None
 
+
 def drug_name(header):
     text = re.sub("[^a-z]", "", str(header).lower())
     for drug in ANTIBIOTIC_ORDER:
         if re.sub("[^a-z]", "", drug.lower()) in text:
             return drug
     return "Penicillin G" if "penicillin" in text else None
+
 
 @dataclass
 class Phenotypes:
@@ -116,6 +56,7 @@ class Phenotypes:
     breakpoints: list = field(default_factory=list)
     metadata: dict = field(default_factory=lambda: defaultdict(dict))
 
+
 def is_data_id(value):
     if value is None:
         return False
@@ -123,6 +64,7 @@ def is_data_id(value):
     if re.search(r"(?i)^(?:isolate|total|subtotal|mean|median|average|SD|variance|pearson|spearman|correlation|notes?|overall|statistics|summary|match|not.match|p.value|MIC[59]0|count|percentage|statistic|minimum|maximum|range)(?:\b|_)", token):
         return False
     return bool(re.fullmatch(r"[\w.\-]+", token) or canonical(token) == QC)
+
 
 def read_master(path, audit):
     data = Phenotypes()
@@ -242,24 +184,3 @@ def read_master(path, audit):
         formulas.close()
         cached.close()
     return data
-
-def load_aliases(path):
-    """Read a one-step private mapping before workbook and filename matching."""
-    aliases = {}
-    if path is None:
-        return aliases
-    with path.open(encoding="utf-8-sig", newline="") as handle:
-        rows = csv.DictReader(handle)
-        if rows.fieldnames != ["alias", "canonical_id"]:
-            raise ValueError("Expected alias,canonical_id in the alias CSV")
-        for number, row in enumerate(rows, 2):
-            alias = (row["alias"] or "").strip().upper()
-            target = (row["canonical_id"] or "").strip().upper()
-            if not alias or not target or alias in aliases or None in row:
-                raise ValueError(f"Empty or duplicate alias, or extra field, on row {number}")
-            if alias == QC or target == QC:
-                raise ValueError("The quality-control identity is reserved")
-            aliases[alias] = target
-    if set(aliases) & set(aliases.values()):
-        raise ValueError("Map aliases directly to final canonical IDs")
-    return aliases

@@ -1,31 +1,51 @@
-"""Mutations orchestration."""
+"""Genomic workflow: per-gene calling, then reports, matrices, sequences and summary tables."""
 from __future__ import annotations
 
-from .engine import (
+import shutil
+
+try:
+    from Bio import SeqIO
+    from Bio.Align import PairwiseAligner
+    from Bio.Seq import Seq
+except ImportError:
+    SeqIO = Seq = PairwiseAligner = None
+
+try:
+    import parasail as _parasail
+except ImportError:
+    _parasail = None
+
+from ng_amr.core.audit import (
+    csv_write,
+    stage,
+)
+from ng_amr.core.constants import (
     DEFAULT_GENES,
     QC,
-    SeqIO,
+)
+from ng_amr.genomics.aa_comparison import (
+    generate_aa_comparison_package,
+)
+from ng_amr.genomics.alignment import (
+    load_curated,
+)
+from ng_amr.genomics.locus import (
     _CACHE,
-    _parasail,
-    clinical_gene_profiles,
+    process_gene,
+)
+from ng_amr.genomics.sequences import (
+    generate_extracted_sequences_package,
+)
+from ng_amr.reports.grouped import (
+    grouped_mutation_reports,
+)
+from ng_amr.reports.master_matrix import (
     clinical_view,
     combined_master,
-    create_gene_mutation_cooccurrence_figure,
-    create_master_analysis_figures,
-    create_multigene_mutation_cooccurrence_count_heatmap,
-    csv_write,
-    generate_aa_comparison_package,
-    generate_exclusive_figures_package,
-    generate_extended_thesis_publication_package,
-    generate_extracted_sequences_package,
-    generate_final_for_thesis_package,
-    generate_thesis_publication_package,
-    grouped_mutation_reports,
-    load_curated,
-    process_gene,
-    shutil,
-    stage,
     write_master_matrix,
+)
+from ng_amr.reports.summary_tables import (
+    generate_summary_tables,
 )
 
 
@@ -66,26 +86,7 @@ def genomes(base,assemblies,book,root,args,audit):
     if aa.is_dir():
         stage(audit,"AA comparison",lambda:generate_aa_comparison_package(results,str(root),str(aa)))
     else:audit.add("AA comparison","skipped","original AA directory missing")
-    stage(audit,"clinical genomic and MIC profiles",lambda:clinical_gene_profiles(cases,book,root,audit))
     all_ids=sorted({d["isolate"] for g in cases for d in g["all_data"]})
     if not all_ids:return cases
-    # Full data drive the tables. Bound the source's isolate-axis illustration
-    # galleries, and make the displayed cohort explicit in the folder and manifest.
-    plotroot=root
-    visual=cases
-    if len(all_ids)>60:
-        selected=all_ids[:60];visual=clinical_view(results,set(selected))
-        plotroot=root/f"Clinical_figure_subset_60_of_{len(all_ids)}"
-        plotroot.mkdir(exist_ok=True)
-        csv_write(plotroot/"displayed_isolates.csv",["Canonical ID"],([k] for k in selected))
-        audit.add("WGS figures","subset",f"first 60 of {len(all_ids)} clinical IDs in lexical order in {plotroot.name}")
-    for name,fn in (("master genomic figures",create_master_analysis_figures),
-                    ("gene co-occurrence",create_gene_mutation_cooccurrence_figure),
-                    ("multi-gene co-occurrence",create_multigene_mutation_cooccurrence_count_heatmap)):
-        stage(audit,name,lambda:fn(visual,str(plotroot)))
-    stage(audit,"exclusive genomic figures",lambda:generate_exclusive_figures_package(visual,str(plotroot),curated))
-    for name,fn in (("publication figures",generate_thesis_publication_package),
-                    ("extended publication figures",generate_extended_thesis_publication_package)):
-        stage(audit,name,lambda:fn(visual,str(plotroot),curated,args.thresholds))
-    stage(audit,"thesis tables and reports",lambda:generate_final_for_thesis_package(cases,str(root),curated,args.thresholds))
+    stage(audit,"summary tables",lambda:generate_summary_tables(cases,str(root),curated,args.thresholds))
     return cases
